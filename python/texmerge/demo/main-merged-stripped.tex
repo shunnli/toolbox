@@ -1,0 +1,22 @@
+\documentclass{article}
+\usepackage{amsmath}
+
+\title{Flatten Demo}
+\author{Author}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}
+This is the introduction. We reference Figure~\ref{fig:diagram}.
+\newcommand{\specialFunc}{\mathcal{F}}
+\section{Results}
+Our results are conclusive. The function \(\specialFunc(x)\) converges rapidly.
+\begin{verbatim}
+% this is verbatim, not a comment
+\input{should-not-expand}
+\end{verbatim}
+
+\bibliographystyle{plain}
+\bibliography{refs}
+\end{document}

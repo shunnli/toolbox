@@ -1,0 +1,35 @@
+\documentclass{article}
+\usepackage{amsmath}
+
+\title{Flatten Demo}
+\author{Author}
+
+\begin{document}
+\maketitle
+
+%======================= Begin sections/intro.tex =======================
+
+\section{Introduction}
+This is the introduction. We reference Figure~\ref{fig:diagram}.
+% this comment will be stripped with --strip-comments
+%======================== Begin shared/defs.tex =========================
+
+\newcommand{\specialFunc}{\mathcal{F}}
+
+%========================= End shared/defs.tex ==========================
+
+%======================== End sections/intro.tex ========================
+%====================== Begin chapters/results.tex ======================
+
+\section{Results}
+Our results are conclusive. The function \(\specialFunc(x)\) converges rapidly.
+\begin{verbatim}
+% this is verbatim, not a comment
+\input{should-not-expand}
+\end{verbatim}
+
+%======================= End chapters/results.tex =======================
+
+\bibliographystyle{plain}
+\bibliography{refs}
+\end{document}

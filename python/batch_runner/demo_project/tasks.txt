@@ -1,0 +1,4 @@
+# demo task file
+python\batch_runner\demo_project\analysis_main.py
+python\batch_runner\demo_project\main_setup.py
+python\batch_runner\demo_project\group_a\main_calc.py
