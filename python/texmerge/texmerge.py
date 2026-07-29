@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Merge a multi-file LaTeX project into a single self-contained .tex file.
 
-Recursively expands \\input, \\include, \\import (from the import package),
-and \\subfile (from the subfiles package) commands.
+Recursively expands \\input and \\include commands.
 """
 
 import argparse
 import re
 import sys
+import warnings
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -26,15 +26,13 @@ VERBATIM_ENVS = {
 BEGIN_ENV = re.compile(r"\\begin\{(\w+\*?)\}")
 END_ENV = re.compile(r"\\end\{(\w+\*?)\}")
 
-# \input{...}, \include{...}, \subfile{...}  (single-arg)
+# \input{...}, \include{...}; DOTALL allows the argument to span lines.
 INLINE_ONE_ARG = re.compile(
-    r"\\(input|include|subfile)\b\s*\{([^}]+)\}"
+    r"\\(input|include)\b\s*\{([^}]+)\}",
+    re.DOTALL,
 )
-
-# \import{path}{file}  (two-arg, from the import package)
-IMPORT_CMD = re.compile(
-    r"\\import\b\s*\{([^}]+)\}\{([^}]+)\}"
-)
+INLINE_COMMAND_START = re.compile(r"\\(?:input|include)\b")
+UNSUPPORTED_CMD = re.compile(r"\\(subfile|import)\b")
 
 # \includeonly{...} — should be commented out or dropped
 INCLUDEONLY_CMD = re.compile(r"\\includeonly\b")
@@ -87,6 +85,18 @@ class CircularIncludeError(Exception):
     """Raised when an included file references an ancestor file."""
 
 
+class TexMergeWarning(UserWarning):
+    """Base class for non-fatal texmerge warnings."""
+
+
+class UnsupportedCommandWarning(TexMergeWarning):
+    """Warning emitted when an unsupported inclusion command is preserved."""
+
+
+class PotentialMergeIssueWarning(TexMergeWarning):
+    """Warning emitted when an expansion may not preserve LaTeX semantics."""
+
+
 class TexMerger:
     def __init__(self, strip_comments: bool = False, no_markers: bool = False):
         self.strip_comments = strip_comments
@@ -115,24 +125,35 @@ class TexMerger:
 
         self._active_stack.append(abspath)
 
+        try:
+            return self._merge_active_file(abspath)
+        finally:
+            popped = self._active_stack.pop()
+            assert popped == abspath
+
+    def _merge_active_file(self, abspath: Path) -> str:
+        """Merge a file that has already been added to the active stack."""
         content = abspath.read_text(encoding="utf-8").replace("\r\n", "\n")
         lines = content.split("\n")
         output: list[str] = []
-        verbatim_stack: list[str] = []
         prev_blank = False
 
-        for line in lines:
-            _update_verbatim(line, verbatim_stack)
-
-            if verbatim_stack:
-                output.append(line)
+        for active, comment, is_verbatim in self._logical_lines(lines):
+            if is_verbatim:
+                output.append(active)
                 prev_blank = False
                 continue
 
-            active, comment = self._split_line(line)
+            self._warn_unsupported_commands(active, abspath)
 
             # --- \includeonly ---
             if INCLUDEONLY_CMD.search(active):
+                warnings.warn(
+                    f"\\includeonly in {abspath} is modified during merging; "
+                    "verify that the merged document includes the intended files.",
+                    PotentialMergeIssueWarning,
+                    stacklevel=2,
+                )
                 if self.strip_comments:
                     continue
                 output.append(f"% {active}{comment}".rstrip())
@@ -140,8 +161,22 @@ class TexMerger:
                 continue
 
             # --- try expand inlinable commands ---
+            if "\n" in active and comment:
+                warnings.warn(
+                    f"A multiline inclusion command in {abspath} contains "
+                    "comments; comment placement may change after expansion.",
+                    PotentialMergeIssueWarning,
+                    stacklevel=2,
+                )
             expanded = self._try_expand(active, abspath.parent)
             if expanded is None:
+                if INLINE_COMMAND_START.search(active):
+                    warnings.warn(
+                        f"An \\input or \\include command in {abspath} could "
+                        "not be parsed and was left unchanged.",
+                        PotentialMergeIssueWarning,
+                        stacklevel=2,
+                    )
                 # No inlinable command — emit as-is
                 if self.strip_comments:
                     stripped = active.rstrip()
@@ -170,10 +205,78 @@ class TexMerger:
                 output.extend(expanded)
                 prev_blank = False
 
-        self._active_stack.pop()
         return "\n".join(output).rstrip() + "\n"
 
     # -- line splitting ------------------------------------------------------
+
+    @staticmethod
+    def _warn_unsupported_commands(active: str, file_path: Path) -> None:
+        """Warn about unsupported inclusion commands in active LaTeX."""
+        for match in UNSUPPORTED_CMD.finditer(active):
+            command = match.group(1)
+            warnings.warn(
+                f"Unsupported LaTeX command \\{command} in {file_path}; "
+                "left unchanged.",
+                UnsupportedCommandWarning,
+                stacklevel=2,
+            )
+
+    def _logical_lines(self, lines: list[str]) -> list[tuple[str, str, bool]]:
+        """Return logical lines, joining multiline include commands.
+
+        Each tuple is ``(active, comment, is_verbatim)``. Comments encountered
+        inside a multiline command are retained and attached to its expansion.
+        """
+        result: list[tuple[str, str, bool]] = []
+        verbatim_stack: list[str] = []
+        pending_active: list[str] = []
+        pending_comments: list[str] = []
+
+        for line in lines:
+            if pending_active:
+                active, comment = self._split_line(line)
+                pending_active.append(active)
+                if comment:
+                    pending_comments.append(comment)
+                combined = "\n".join(pending_active)
+                if INLINE_ONE_ARG.search(combined):
+                    result.append((combined, " ".join(pending_comments), False))
+                    pending_active.clear()
+                    pending_comments.clear()
+                continue
+
+            _update_verbatim(line, verbatim_stack)
+            if verbatim_stack:
+                result.append((line, "", True))
+                continue
+
+            active, comment = self._split_line(line)
+            if self._needs_continuation(active):
+                pending_active.append(active)
+                if comment:
+                    pending_comments.append(comment)
+                continue
+            result.append((active, comment, False))
+
+        if pending_active:
+            result.append(
+                (
+                    "\n".join(pending_active),
+                    " ".join(pending_comments),
+                    False,
+                )
+            )
+        return result
+
+    @staticmethod
+    def _needs_continuation(active: str) -> bool:
+        """Return whether *active* starts an unfinished include command."""
+        match = INLINE_COMMAND_START.search(active)
+        if match is None or INLINE_ONE_ARG.search(active):
+            return False
+        remainder = active[match.end() :]
+        stripped = remainder.lstrip()
+        return not stripped or (stripped.startswith("{") and "}" not in stripped)
 
     def _split_line(self, line: str) -> tuple[str, str]:
         """Split *line* into (active, comment) at the first unescaped '%'.
@@ -193,22 +296,20 @@ class TexMerger:
         Returns ``None`` if no inlinable command is found.
         """
         assert self._main_dir is not None  # set by merge()
-        # \import{path}{file} — paths are relative to the file containing the
-        # command (that's the whole point of the import package).
-        m = IMPORT_CMD.search(active)
-        if m:
-            raw = f"{m.group(1)}/{m.group(2)}"
-            target = self._resolve_path(raw, parent_dir, parent_dir)
-            content = self._merge_file(target)
-            return self._format_expansion(active, content, m.start(), m.end(), target)
-
-        # \input{...} / \include{...} / \subfile{...}
+        # \input{...} / \include{...}
         # Standard LaTeX resolves these relative to the main file's directory.
         # Fall back to parent_dir when the file isn't found at the main level
         # (supports projects that use path-relative-to-current-file convention).
         m = INLINE_ONE_ARG.search(active)
         if m:
-            raw = m.group(2)
+            if INLINE_ONE_ARG.search(active, m.end()):
+                warnings.warn(
+                    "Multiple \\input or \\include commands occur on one "
+                    "logical line; only the first command will be expanded.",
+                    PotentialMergeIssueWarning,
+                    stacklevel=2,
+                )
+            raw = re.sub(r"\s*\n\s*", "", m.group(2)).strip()
             target = self._resolve_path(raw, self._main_dir, parent_dir)
             content = self._merge_file(target)
             return self._format_expansion(active, content, m.start(), m.end(), target)
@@ -238,6 +339,12 @@ class TexMerger:
             return [marker_begin, ""] + lines + ["", marker_end]
         else:
             # Mid-line command — inline without markers
+            warnings.warn(
+                f"Mid-line inclusion of {target} may change whitespace or "
+                "line-sensitive LaTeX semantics; verify the merged output.",
+                PotentialMergeIssueWarning,
+                stacklevel=2,
+            )
             inner = content.rstrip("\n").split("\n")
             if len(inner) == 1:
                 return [f"{before}{inner[0]}{after}"]
@@ -256,7 +363,8 @@ class TexMerger:
         Tries *primary_dir* first, then *fallback_dir*.  Tries the raw path
         first, then with ``.tex`` appended if the raw path has no extension.
         """
-        for base in (primary_dir, fallback_dir):
+
+        def find_in(base: Path) -> Path | None:
             candidate = (base / raw_path).resolve()
             if candidate.is_file():
                 return candidate
@@ -264,6 +372,33 @@ class TexMerger:
                 candidate_tex = (base / f"{raw_path}.tex").resolve()
                 if candidate_tex.is_file():
                     return candidate_tex
+            return None
+
+        primary_target = find_in(primary_dir)
+        fallback_target = find_in(fallback_dir)
+
+        if primary_target is not None:
+            if fallback_target is not None and fallback_target != primary_target:
+                warnings.warn(
+                    f"Included path {raw_path!r} is ambiguous: both "
+                    f"{primary_target} and {fallback_target} exist; using "
+                    f"{primary_target}.",
+                    PotentialMergeIssueWarning,
+                    stacklevel=2,
+                )
+            return primary_target
+
+        if fallback_target is not None:
+            if primary_dir.resolve() != fallback_dir.resolve():
+                warnings.warn(
+                    f"Included path {raw_path!r} was not found relative to "
+                    f"the main file; using {fallback_target} relative to the "
+                    "containing file.",
+                    PotentialMergeIssueWarning,
+                    stacklevel=2,
+                )
+            return fallback_target
+
         raise FileNotFoundError(
             f"Included file not found: {raw_path}\n"
             f"  looked in: {primary_dir}\n"
@@ -285,7 +420,7 @@ class TexMerger:
     def _marker(label: str, rel_path: str, width: int = 72) -> str:
         """Build a marker comment line like::
 
-            % ===== Begin path/to/file.tex =====
+        % ===== Begin path/to/file.tex =====
         """
         text = f" {label} {rel_path} "
         left = (width - len(text)) // 2
@@ -303,7 +438,7 @@ def main() -> None:
         prog="texmerge",
         description=(
             "Merge a multi-file LaTeX project into a single self-contained .tex file.\n"
-            "Recursively expands \\input, \\include, \\import, and \\subfile commands."
+            "Recursively expands \\input and \\include commands."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -339,7 +474,9 @@ def main() -> None:
 
     if args.output.exists() and not args.force:
         print(f"Error: output file already exists: {args.output}", file=sys.stderr)
-        print("  Use -f/--force to overwrite, or delete the file first.", file=sys.stderr)
+        print(
+            "  Use -f/--force to overwrite, or delete the file first.", file=sys.stderr
+        )
         sys.exit(1)
 
     merger = TexMerger(

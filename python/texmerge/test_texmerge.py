@@ -5,6 +5,7 @@ import io
 import sys
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -70,19 +71,25 @@ class TestBasicInlining(FixtureMixin, unittest.TestCase):
         self.assertIn("Chapter one.", out)
         self.assertNotIn(r"\include", out)
 
-    def test_subfile_expanded(self) -> None:
-        self._write("main.tex", r"\subfile{appendix}")
-        self._write("appendix.tex", "Appendix content.\n")
+    def test_multiline_input_expanded(self) -> None:
+        self._write(
+            "main.tex",
+            "\\input{\n" "  sections/intro\n" "}\n",
+        )
+        self._write("sections/intro.tex", "Introduction text.\n")
         out = self._merge()
-        self.assertIn("Appendix content.", out)
-        self.assertNotIn(r"\subfile", out)
+        self.assertIn("Introduction text.", out)
+        self.assertNotIn(r"\input", out)
 
-    def test_import_expanded(self) -> None:
-        self._write("main.tex", r"\import{figures/}{diagram}")
-        self._write("figures/diagram.tex", "TikZ diagram.\n")
+    def test_multiline_include_expanded(self) -> None:
+        self._write(
+            "main.tex",
+            "\\include\n" "{chapters/results}\n",
+        )
+        self._write("chapters/results.tex", "Results.\n")
         out = self._merge()
-        self.assertIn("TikZ diagram.", out)
-        self.assertNotIn(r"\import", out)
+        self.assertIn("Results.", out)
+        self.assertNotIn(r"\include", out)
 
     def test_file_not_found_raises(self) -> None:
         self._write("main.tex", r"\input{missing.tex}")
@@ -94,14 +101,55 @@ class TestBasicInlining(FixtureMixin, unittest.TestCase):
         self._write("main.tex", r"\input{chapters/ch1.tex}")
         self._write("chapters/ch1.tex", r"\input{section-a.tex}")
         self._write("chapters/section-a.tex", "Section A.\n")
-        out = self._merge()
+        with self.assertWarnsRegex(
+            texmerge.PotentialMergeIssueWarning,
+            "relative to the containing file",
+        ):
+            out = self._merge()
         self.assertIn("Section A.", out)
 
     def test_mid_line_input(self) -> None:
         self._write("main.tex", r"Prefix \input{inline} suffix")
         self._write("inline.tex", "inlined content")
-        out = self._merge()
+        with self.assertWarnsRegex(
+            texmerge.PotentialMergeIssueWarning,
+            "Mid-line inclusion",
+        ):
+            out = self._merge()
         self.assertIn("Prefix inlined content suffix", out)
+
+    def test_multiple_commands_on_one_line_warns(self) -> None:
+        self._write("main.tex", r"\input{first} \input{second}")
+        self._write("first.tex", "First.")
+        self._write("second.tex", "Second.")
+        with self.assertWarnsRegex(
+            texmerge.PotentialMergeIssueWarning,
+            "Multiple",
+        ):
+            out = self._merge()
+        self.assertIn("First.", out)
+        self.assertIn(r"\input{second}", out)
+
+    def test_ambiguous_path_warns(self) -> None:
+        self._write("main.tex", r"\input{chapters/ch1}")
+        self._write("chapters/ch1.tex", r"\input{shared}")
+        self._write("shared.tex", "Main-level.")
+        self._write("chapters/shared.tex", "Chapter-level.")
+        with self.assertWarnsRegex(
+            texmerge.PotentialMergeIssueWarning,
+            "ambiguous",
+        ):
+            out = self._merge()
+        self.assertIn("Main-level.", out)
+
+    def test_unparseable_input_warns_and_is_preserved(self) -> None:
+        self._write("main.tex", r"\input{}")
+        with self.assertWarnsRegex(
+            texmerge.PotentialMergeIssueWarning,
+            "could not be parsed",
+        ):
+            out = self._merge()
+        self.assertIn(r"\input{}", out)
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +181,15 @@ class TestRecursiveInlining(FixtureMixin, unittest.TestCase):
         with self.assertRaises(texmerge.CircularIncludeError):
             self._merge()
 
+    def test_merger_can_be_reused_after_failure(self) -> None:
+        main = self._write("main.tex", r"\input{missing.tex}")
+        merger = texmerge.TexMerger()
+        with self.assertRaises(FileNotFoundError):
+            merger.merge(main)
+
+        self._write("main.tex", "Recovered.\n")
+        self.assertIn("Recovered.", merger.merge(main))
+
 
 # ---------------------------------------------------------------------------
 # Comment handling
@@ -159,11 +216,25 @@ class TestCommentHandling(FixtureMixin, unittest.TestCase):
         out = self._merge()
         self.assertIn("expanded content", out)
 
+    def test_comment_in_multiline_input_warns(self) -> None:
+        self._write(
+            "main.tex",
+            "\\input{% command comment\n" "real.tex\n" "}\n",
+        )
+        self._write("real.tex", "expanded content")
+        with self.assertWarnsRegex(
+            texmerge.PotentialMergeIssueWarning,
+            "contains comments",
+        ):
+            out = self._merge()
+        self.assertIn("expanded content", out)
+
     def test_escaped_percent_not_comment(self) -> None:
         """\\% is an escaped percent sign, not a comment starter."""
         self._write("main.tex", r"100\% done \input{real.tex}")
         self._write("real.tex", "content")
-        out = self._merge()
+        with self.assertWarns(texmerge.PotentialMergeIssueWarning):
+            out = self._merge()
         self.assertIn("content", out)
 
     def test_double_backslash_then_comment(self) -> None:
@@ -227,9 +298,7 @@ class TestVerbatimProtection(FixtureMixin, unittest.TestCase):
     def test_input_inside_verbatim_not_expanded(self) -> None:
         self._write(
             "main.tex",
-            "\\begin{verbatim}\n"
-            r"\input{not-real.tex}" + "\n"
-            "\\end{verbatim}\n",
+            "\\begin{verbatim}\n" r"\input{not-real.tex}" + "\n" "\\end{verbatim}\n",
         )
         self._write("not-real.tex", "Should not be included.\n")
         out = self._merge()
@@ -247,9 +316,7 @@ class TestVerbatimProtection(FixtureMixin, unittest.TestCase):
     def test_lstlisting_protected(self) -> None:
         self._write(
             "main.tex",
-            "\\begin{lstlisting}\n"
-            r"\input{code.tex}" + "\n"
-            "\\end{lstlisting}\n",
+            "\\begin{lstlisting}\n" r"\input{code.tex}" + "\n" "\\end{lstlisting}\n",
         )
         self._write("code.tex", "Should not be included.\n")
         out = self._merge()
@@ -258,9 +325,7 @@ class TestVerbatimProtection(FixtureMixin, unittest.TestCase):
     def test_comment_env_protected(self) -> None:
         self._write(
             "main.tex",
-            "\\begin{comment}\n"
-            r"\input{hidden.tex}" + "\n"
-            "\\end{comment}\n",
+            "\\begin{comment}\n" r"\input{hidden.tex}" + "\n" "\\end{comment}\n",
         )
         self._write("hidden.tex", "Should not be included.\n")
         out = self._merge()
@@ -304,13 +369,21 @@ class TestMarkers(FixtureMixin, unittest.TestCase):
 class TestIncludeonly(FixtureMixin, unittest.TestCase):
     def test_includeonly_commented_out(self) -> None:
         self._write("main.tex", r"\includeonly{ch1,ch2}")
-        out = self._merge()
+        with self.assertWarnsRegex(
+            texmerge.PotentialMergeIssueWarning,
+            r"\\includeonly",
+        ):
+            out = self._merge()
         self.assertIn(r"% \includeonly{ch1,ch2}", out)
 
     def test_includeonly_dropped_when_stripping(self) -> None:
         self._write("main.tex", r"\includeonly{ch1,ch2}")
         m = texmerge.TexMerger(strip_comments=True)
-        out = m.merge(self._path("main.tex"))
+        with self.assertWarnsRegex(
+            texmerge.PotentialMergeIssueWarning,
+            r"\\includeonly",
+        ):
+            out = m.merge(self._path("main.tex"))
         self.assertNotIn("includeonly", out)
 
 
@@ -320,6 +393,43 @@ class TestIncludeonly(FixtureMixin, unittest.TestCase):
 
 
 class TestCommandPreservation(FixtureMixin, unittest.TestCase):
+    def test_subfile_preserved(self) -> None:
+        self._write("main.tex", r"\subfile{appendix}")
+        self._write("appendix.tex", "Appendix content.\n")
+        with self.assertWarnsRegex(
+            texmerge.UnsupportedCommandWarning,
+            r"Unsupported LaTeX command \\subfile",
+        ):
+            out = self._merge()
+        self.assertIn(r"\subfile{appendix}", out)
+        self.assertNotIn("Appendix content.", out)
+
+    def test_import_preserved(self) -> None:
+        self._write("main.tex", r"\import{figures/}{diagram}")
+        self._write("figures/diagram.tex", "TikZ diagram.\n")
+        with self.assertWarnsRegex(
+            texmerge.UnsupportedCommandWarning,
+            r"Unsupported LaTeX command \\import",
+        ):
+            out = self._merge()
+        self.assertIn(r"\import{figures/}{diagram}", out)
+        self.assertNotIn("TikZ diagram.", out)
+
+    def test_unsupported_command_in_comment_does_not_warn(self) -> None:
+        self._write("main.tex", r"% \subfile{appendix}")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", texmerge.UnsupportedCommandWarning)
+            self._merge()
+
+    def test_unsupported_command_in_verbatim_does_not_warn(self) -> None:
+        self._write(
+            "main.tex",
+            "\\begin{verbatim}\n" "\\import{figures/}{diagram}\n" "\\end{verbatim}\n",
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", texmerge.UnsupportedCommandWarning)
+            self._merge()
+
     def test_bibliography_preserved(self) -> None:
         self._write("main.tex", r"\bibliography{refs}")
         out = self._merge()
@@ -355,7 +465,8 @@ class TestEdgeCases(FixtureMixin, unittest.TestCase):
     def test_empty_included_file(self) -> None:
         self._write("main.tex", r"Before\input{empty.tex}After")
         self._write("empty.tex", "")
-        out = self._merge()
+        with self.assertWarns(texmerge.PotentialMergeIssueWarning):
+            out = self._merge()
         self.assertIn("Before", out)
         self.assertIn("After", out)
 
@@ -425,8 +536,9 @@ class TestCLI(FixtureMixin, unittest.TestCase):
 
     def test_default_main_and_output(self) -> None:
         self._write_main()
-        code, out, err = self._run_cli("--main", self._abs("main.tex"),
-                                       "--output", self._abs("main-merged.tex"))
+        code, out, err = self._run_cli(
+            "--main", self._abs("main.tex"), "--output", self._abs("main-merged.tex")
+        )
         self.assertEqual(code, 0)
         result = self._path("main-merged.tex").read_text(encoding="utf-8")
         self.assertIn("Hello", result)
@@ -434,8 +546,10 @@ class TestCLI(FixtureMixin, unittest.TestCase):
     def test_custom_main_and_output(self) -> None:
         self._write("paper.tex", "Content\n")
         code, out, err = self._run_cli(
-            "--main", self._abs("paper.tex"),
-            "--output", self._abs("out.tex"),
+            "--main",
+            self._abs("paper.tex"),
+            "--output",
+            self._abs("out.tex"),
         )
         self.assertEqual(code, 0)
         result = self._path("out.tex").read_text(encoding="utf-8")
@@ -445,8 +559,10 @@ class TestCLI(FixtureMixin, unittest.TestCase):
         self._write("main.tex", "Visible % hidden")
         code, out, err = self._run_cli(
             "--strip-comments",
-            "--main", self._abs("main.tex"),
-            "--output", self._abs("main-merged.tex"),
+            "--main",
+            self._abs("main.tex"),
+            "--output",
+            self._abs("main-merged.tex"),
         )
         self.assertEqual(code, 0)
         result = self._path("main-merged.tex").read_text(encoding="utf-8")
@@ -458,8 +574,10 @@ class TestCLI(FixtureMixin, unittest.TestCase):
         self._write("sub.tex", "Content.\n")
         code, out, err = self._run_cli(
             "--no-markers",
-            "--main", self._abs("main.tex"),
-            "--output", self._abs("main-merged.tex"),
+            "--main",
+            self._abs("main.tex"),
+            "--output",
+            self._abs("main-merged.tex"),
         )
         self.assertEqual(code, 0)
         result = self._path("main-merged.tex").read_text(encoding="utf-8")
@@ -475,8 +593,10 @@ class TestCLI(FixtureMixin, unittest.TestCase):
         self._write("main.tex", r"\input{sub.tex}")
         self._write("sub.tex", r"\input{main.tex}")
         code, out, err = self._run_cli(
-            "--main", self._abs("main.tex"),
-            "--output", self._abs("main-merged.tex"),
+            "--main",
+            self._abs("main.tex"),
+            "--output",
+            self._abs("main-merged.tex"),
         )
         self.assertEqual(code, 1)
         self.assertIn("Circular", err)
@@ -485,8 +605,10 @@ class TestCLI(FixtureMixin, unittest.TestCase):
         self._write("main.tex", "Hello\n")
         self._write("main-merged.tex", "existing")
         code, out, err = self._run_cli(
-            "--main", self._abs("main.tex"),
-            "--output", self._abs("main-merged.tex"),
+            "--main",
+            self._abs("main.tex"),
+            "--output",
+            self._abs("main-merged.tex"),
         )
         self.assertEqual(code, 1)
         self.assertIn("already exists", err)
@@ -499,8 +621,10 @@ class TestCLI(FixtureMixin, unittest.TestCase):
         self._write("main-merged.tex", "existing")
         code, out, err = self._run_cli(
             "--force",
-            "--main", self._abs("main.tex"),
-            "--output", self._abs("main-merged.tex"),
+            "--main",
+            self._abs("main.tex"),
+            "--output",
+            self._abs("main-merged.tex"),
         )
         self.assertEqual(code, 0)
         result = self._path("main-merged.tex").read_text(encoding="utf-8")

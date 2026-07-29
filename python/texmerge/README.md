@@ -1,6 +1,6 @@
 # texmerge — LaTeX project merger
 
-Merge a multi-file LaTeX project into a single self-contained `.tex` file by recursively inlining `\input`, `\include`, `\import`, and `\subfile` commands.
+Merge a multi-file LaTeX project into a single self-contained `.tex` file by recursively inlining `\input` and `\include` commands.
 
 ## Quick start
 
@@ -28,14 +28,29 @@ uv run python texmerge.py --main main.tex --output arxiv.tex --strip-comments --
 
 | Command                                   | Action                                          |
 | ----------------------------------------- | ----------------------------------------------- |
-| `\input{path}`                            | Recursively inline                              |
-| `\include{path}`                          | Recursively inline (expanded as content)        |
-| `\subfile{path}`                          | Recursively inline                              |
-| `\import{dir}{file}`                      | Recursively inline                              |
+| `\input{path}`                            | Recursively inline; argument may span lines     |
+| `\include{path}`                          | Recursively inline; argument may span lines     |
 | `\includeonly{...}`                       | Commented out (dropped with `--strip-comments`) |
 | `\bibliography{...}`                      | Preserved as-is                                 |
 | `\includegraphics{...}`                   | Preserved as-is                                 |
 | `\usepackage{...}`, `\documentclass{...}` | Preserved as-is                                 |
+
+Other inclusion commands, including `\subfile` and `\import`, are preserved
+as-is and produce a warning explaining that they are unsupported.
+
+## Warnings
+
+The merger emits a warning, while continuing when possible, for constructs that
+may need manual review:
+
+- unsupported `\subfile` and `\import` commands;
+- malformed or incomplete `\input` and `\include` commands;
+- mid-line inclusion commands;
+- multiple inclusion commands on one logical line (only the first is expanded);
+- comments inside a multiline inclusion command;
+- `\includeonly`, which is commented out or removed;
+- paths resolved with the containing-file fallback;
+- paths that exist relative to both the main file and the containing file.
 
 ## Path resolution
 
