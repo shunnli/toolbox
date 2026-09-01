@@ -305,25 +305,29 @@ def run_script(
 # ---------------------------------------------------------------------------
 
 _STATUS_CSS = """\
-:root{--bg:#0d1117;--fg:#c9d1d9;--border:#30363d;--card-bg:#161b22;--meta:#8b949e;--link:#58a6ff;--success:#7ee787;--error:#ff7b72;--gauge-bg:#21262d;--gauge-safe:#238636;--gauge-warn:#d29922;--gauge-danger:#da3633;--progress-bg:#161b22;--progress-fill:#238636;--progress-fail:#da3633;--throttle-bg:#d299221a;--throttle-border:#d29922;--throttle-fg:#d29922;--heading-border:#21262d;--table-border:#21262d}
-:root.light{--bg:#fff;--fg:#24292f;--border:#d0d7de;--card-bg:#f6f8fa;--meta:#656d76;--link:#0969da;--success:#1a7f37;--error:#cf222e;--gauge-bg:#d0d7de;--gauge-safe:#1a7f37;--gauge-warn:#9a6700;--gauge-danger:#cf222e;--progress-bg:#f6f8fa;--progress-fill:#1a7f37;--progress-fail:#cf222e;--throttle-bg:#fff8c5;--throttle-border:#9a6700;--throttle-fg:#9a6700;--heading-border:#d0d7de;--table-border:#d0d7de}
+:root{--bg:#0b1017;--fg:#e6edf3;--border:#303b4a;--card-bg:#151c26;--card-hover:#1b2532;--meta:#8d9aaa;--link:#69b1ff;--success:#3fb950;--error:#f85149;--running:#388bfd;--queued:#4b5563;--gauge-bg:#273140;--gauge-safe:#3fb950;--gauge-warn:#d29922;--gauge-danger:#f85149;--progress-bg:#202938;--throttle-bg:#d299221a;--throttle-border:#d29922;--throttle-fg:#e3b341;--heading-border:#273140;--table-border:#273140;--shadow:0 12px 32px #00000026}
+:root.light{--bg:#f4f7fb;--fg:#1f2937;--border:#d7dee8;--card-bg:#fff;--card-hover:#f8fafc;--meta:#667085;--link:#0969da;--success:#1a7f37;--error:#cf222e;--running:#0969da;--queued:#afb8c1;--gauge-bg:#d8dee7;--gauge-safe:#1a7f37;--gauge-warn:#9a6700;--gauge-danger:#cf222e;--progress-bg:#e7ebf0;--throttle-bg:#fff8c5;--throttle-border:#9a6700;--throttle-fg:#7d4e00;--heading-border:#d8dee7;--table-border:#e5e9ef;--shadow:0 12px 32px #1f293712}
 *{margin:0;padding:0;box-sizing:border-box}
-body{font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg);padding:24px;max-width:900px;margin:0 auto}
-.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
-h1{font-size:20px}
-#theme-toggle{background:none;border:1px solid var(--border);color:var(--fg);cursor:pointer;font-size:16px;padding:3px 8px;border-radius:6px;line-height:1.4}
+body{font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);padding:32px 20px;max-width:1040px;margin:0 auto}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+h1{font-size:22px;letter-spacing:-.02em}
+#theme-toggle{background:var(--card-bg);border:1px solid var(--border);color:var(--fg);cursor:pointer;font-size:16px;padding:5px 10px;border-radius:9px;line-height:1.4;box-shadow:var(--shadow)}
 #theme-toggle:hover{background:var(--card-bg)}
-h2{font-size:15px;color:var(--meta);margin:20px 0 8px;border-bottom:1px solid var(--heading-border);padding-bottom:4px}
+#theme-toggle svg{display:block;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#theme-toggle .icon-sun{display:none}:root.light #theme-toggle .icon-sun{display:block}:root.light #theme-toggle .icon-moon{display:none}
+h2{font-size:13px;color:var(--meta);margin:24px 0 8px;text-transform:uppercase;letter-spacing:.08em}
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:12px 0}
-.stat{background:var(--card-bg);border:1px solid var(--border);border-radius:6px;padding:12px}
+.stat{background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
 .stat .label{font-size:11px;color:var(--meta);text-transform:uppercase;letter-spacing:.5px}
-.stat .value{font-size:22px;font-weight:600}
-.progress{background:var(--progress-bg);border:1px solid var(--border);border-radius:6px;margin:12px 0;height:28px;overflow:hidden}
-.progress-bar{height:100%;background:var(--progress-fill);transition:width .3s}
-.progress-bar.fail{background:var(--progress-fail)}
+.stat .value{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
+.progress{display:flex;background:var(--progress-bg);border:1px solid var(--border);border-radius:10px;margin:18px 0 8px;height:30px;overflow:hidden;box-shadow:var(--shadow)}
+.progress-segment{height:100%;min-width:2px;transition:background-color .3s;box-shadow:inset -1px 0 #ffffff28}
+.progress-segment.success{background:var(--success)}.progress-segment.failed{background:var(--error)}.progress-segment.running{background:var(--running)}.progress-segment.queued{background:var(--queued)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 16px;color:var(--meta);font-size:12px;margin-bottom:4px}.legend span{display:flex;align-items:center;gap:6px}.legend i{width:8px;height:8px;border-radius:50%;background:var(--queued)}.legend .running i{background:var(--running)}.legend .success i{background:var(--success)}.legend .failed i{background:var(--error)}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;color:var(--meta);font-weight:500;padding:4px 8px}
-td{padding:3px 8px;border-top:1px solid var(--table-border)}
+td{padding:7px 8px;border-top:1px solid var(--table-border)}
+tr:hover td{background:var(--card-hover)}
 td.ok{color:var(--success)}
 td.fail{color:var(--error)}
 .meta{font-size:12px;color:var(--meta);margin-top:16px}
@@ -333,9 +337,9 @@ td.fail{color:var(--error)}
 .gauge-fill.safe{background:var(--gauge-safe)}
 .gauge-fill.warn{background:var(--gauge-warn)}
 .gauge-fill.danger{background:var(--gauge-danger)}
-.throttle{background:var(--throttle-bg);border:1px solid var(--throttle-border);border-radius:6px;padding:8px 12px;margin:8px 0;color:var(--throttle-fg)}
+.throttle{background:var(--throttle-bg);border:1px solid var(--throttle-border);border-radius:10px;padding:8px 12px;margin:12px 0;color:var(--throttle-fg)}
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
-@media (max-width:640px){body{padding:12px}.header{flex-wrap:wrap;gap:8px}h1{font-size:17px}#theme-toggle{font-size:14px;padding:2px 6px}h2{font-size:14px}.stat-grid{grid-template-columns:repeat(2,1fr);gap:6px}.stat{padding:8px 10px}.stat .value{font-size:18px}table{font-size:11px}th,td{padding:2px 4px}.meta{font-size:11px;margin-top:12px}.gauge{font-size:12px}}
+@media (max-width:640px){body{padding:18px 12px}.header{gap:8px}h1{font-size:18px}#theme-toggle{font-size:14px;padding:4px 8px}h2{font-size:12px;margin-top:20px}.stat-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.stat{padding:10px 12px;border-radius:10px}.stat .value{font-size:20px}.progress{height:24px;margin-top:14px}.legend{gap:5px 12px}table{font-size:12px;min-width:420px}th,td{padding:6px 5px}.meta{font-size:11px;margin-top:10px;overflow-wrap:anywhere}.gauge{font-size:12px}}
 """
 
 
@@ -344,19 +348,24 @@ def _build_status_html(runner: "BatchRunner") -> str:
     elapsed = time.time() - s["start_time"] if s["start_time"] else 0
     total = s["total"]
     done = s["completed"]
-    pct = min(100, int(done / total * 100)) if total else 0
     is_done = done >= total and total > 0
 
     parts = [
         "<!DOCTYPE html><html><head>",
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width,initial-scale=1.0">',
-        "<title>batch_runner status</title>",
+        f'<title>batch_runner · {done}/{total} · {s["success"]} OK · {s["failed"]} failed</title>',
+        '<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2714%27 fill=%27%23388bfd%27/%3E%3Cpath d=%27M21 16l23 16-23 16z%27 fill=%27white%27/%3E%3C/svg%3E">',
         "<script>document.documentElement.className=localStorage.getItem('batch-runner-theme')||''</script>",
         f"<style>{_STATUS_CSS}</style></head><body>",
         '<div class="header">',
-        f'<h1>batch_runner &mdash; <span id="h1-total">{total}</span> scripts</h1>',
-        '<button id="theme-toggle" title="Toggle theme">☽</button>',
+        f'<h1>🚀 batch_runner &mdash; <span id="h1-total">{total}</span> scripts</h1>',
+        '<button id="theme-toggle" title="Toggle theme" aria-label="Toggle color theme">'
+        '<svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">'
+        '<path d="M20.5 14.3A8.5 8.5 0 0 1 9.7 3.5 8.5 8.5 0 1 0 20.5 14.3Z"/>'
+        '</svg><svg class="icon-sun" viewBox="0 0 24 24" aria-hidden="true">'
+        '<circle cx="12" cy="12" r="3.5"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/>'
+        '</svg></button>',
         "</div>",
     ]
 
@@ -369,32 +378,43 @@ def _build_status_html(runner: "BatchRunner") -> str:
 
     parts.append(
         '<div id="throttle-banner" class="throttle"'
-        f' style="display:{"block" if s["throttled"] else "none"}">THROTTLED</div>'
+        f' style="display:{"block" if s["throttled"] else "none"}">⚠️ THROTTLED</div>'
     )
 
-    # progress
-    pct_str = f"{pct}%" if pct > 0 else "0%"
-    parts.append('<div class="progress">')
-    parts.append(f'<div id="prog" class="progress-bar" style="width:{pct_str}"></div>')
+    # One equally sized segment per task so mixed outcomes remain visible.
+    progress_states = [
+        "success" if result["success"] else "failed" for result in s["results"]
+    ]
+    progress_states.extend("running" for _ in s["running"])
+    progress_states.extend("queued" for _ in range(max(0, total - len(progress_states))))
+    parts.append('<div id="prog" class="progress" aria-label="Task progress">')
+    for state in progress_states:
+        parts.append(f'<span class="progress-segment {state}" style="flex:1"></span>')
     parts.append("</div>")
+    parts.append(
+        '<div class="legend"><span><i></i>🕒 Queued</span>'
+        '<span class="running"><i></i>⚙️ Running</span>'
+        '<span class="success"><i></i>✅ Succeeded</span>'
+        '<span class="failed"><i></i>❌ Failed</span></div>'
+    )
 
     # stats
     running_n = len(s["running"])
     parts.append('<div class="stat-grid">')
     parts.append(
-        '<div class="stat"><div class="label">Completed</div>'
+        '<div class="stat"><div class="label">📋 Completed</div>'
         f'<div class="value" id="st-completed">{done}/{total}</div></div>'
     )
     parts.append(
-        '<div class="stat"><div class="label">Running</div>'
+        '<div class="stat"><div class="label">⚙️ Running</div>'
         f'<div class="value" id="st-running">{running_n}</div></div>'
     )
     parts.append(
-        '<div class="stat"><div class="label">Succeeded</div>'
+        '<div class="stat"><div class="label">✅ Succeeded</div>'
         f'<div class="value" style="color:var(--success)" id="st-success">{s["success"]}</div></div>'
     )
     parts.append(
-        '<div class="stat"><div class="label">Failed</div>'
+        '<div class="stat"><div class="label">❌ Failed</div>'
         f'<div class="value" style="color:var(--error)" id="st-failed">{s["failed"]}</div></div>'
     )
     parts.append("</div>")
@@ -402,7 +422,7 @@ def _build_status_html(runner: "BatchRunner") -> str:
     # running / queued / completed — rendered server-side then updated by JS
     parts.append('<div id="running-section">')
     if s["running"]:
-        parts.append('<h2>Running</h2><div class="table-wrap"><table>')
+        parts.append('<h2>⚙️ Running</h2><div class="table-wrap"><table>')
         parts.append("<tr><th>Script</th><th>Duration</th></tr>")
         for r in s["running"]:
             dur = _fmt_dh(time.time() - r["start"])
@@ -414,7 +434,7 @@ def _build_status_html(runner: "BatchRunner") -> str:
 
     parts.append('<div id="queued-section">')
     if s["queued"]:
-        parts.append('<h2>Queued</h2><div class="table-wrap"><table>')
+        parts.append('<h2>🕒 Queued</h2><div class="table-wrap"><table>')
         for q in s["queued"][:30]:
             parts.append(f"<tr><td>{_h_esc(_sanitize_path(q['path']))}</td></tr>")
         if len(s["queued"]) > 30:
@@ -425,10 +445,10 @@ def _build_status_html(runner: "BatchRunner") -> str:
     parts.append('<div id="completed-section">')
     if s["results"]:
         recent = s["results"][-20:]
-        parts.append('<h2>Completed</h2><div class="table-wrap"><table>')
+        parts.append('<h2>📋 Completed</h2><div class="table-wrap"><table>')
         parts.append("<tr><th>Script</th><th>Duration</th><th>Status</th></tr>")
         for r in recent:
-            status = "OK" if r["success"] else f"FAIL rc={r['returncode']}"
+            status = "✅ OK" if r["success"] else f"❌ FAIL rc={r['returncode']}"
             cls = "ok" if r["success"] else "fail"
             parts.append(
                 f"<tr><td>{_h_esc(_sanitize_path(r['script_path']))}</td>"
@@ -472,10 +492,8 @@ def _build_status_html(runner: "BatchRunner") -> str:
         "(function(){"
         "var btn=document.getElementById('theme-toggle');"
         "var root=document.documentElement;"
-        "btn.textContent=root.classList.contains('light')?'\\u2600':'\\u263d';"
         "btn.addEventListener('click',function(){"
         "var isLight=root.classList.toggle('light');"
-        "btn.textContent=isLight?'\\u2600':'\\u263d';"
         "localStorage.setItem('batch-runner-theme',isLight?'light':'');"
         "});"
         "})();"
@@ -489,34 +507,38 @@ def _build_status_html(runner: "BatchRunner") -> str:
         "return h+'h'+m+'m';}"
         "function _update(){"
         "fetch('/api/status').then(function(r){return r.json()}).then(function(s){"
-        "var t=s.total,d=s.completed,pct=t?Math.min(100,Math.floor(d/t*100)):0;"
+        "var t=s.total,d=s.completed;"
         "var el=s.start_time?_dh(Date.now()/1000-s.start_time):'0s';"
-        "document.getElementById('prog').style.width=pct+'%';"
-        "document.getElementById('prog').className='progress-bar'+(s.failed?' fail':'');"
+        "var states=s.results.map(function(r){return r.success?'success':'failed';});"
+        "s.running.forEach(function(){states.push('running');});"
+        "while(states.length<t)states.push('queued');"
+        "document.getElementById('prog').innerHTML=states.map(function(st){"
+        "return '<span class=\"progress-segment '+st+'\" style=\"flex:1\"></span>';}).join('');"
         "document.getElementById('st-completed').textContent=d+'/'+t;"
         "document.getElementById('st-running').textContent=s.running.length;"
         "document.getElementById('st-success').textContent=s.success;"
         "document.getElementById('st-failed').textContent=s.failed;"
+        "document.title='batch_runner · '+d+'/'+t+' · '+s.success+' OK · '+s.failed+' failed';"
         "document.getElementById('meta-elapsed').textContent='Elapsed '+el;"
         "document.getElementById('throttle-banner').style.display=s.throttled?'block':'none';"
         "document.getElementById('h1-total').textContent=t;"
         "var rn=document.getElementById('running-section');"
         "if(s.running.length){"
-        "var h='<h2>Running</h2><div class=\"table-wrap\"><table><tr><th>Script</th><th>Duration</th></tr>';"
+        "var h='<h2>⚙️ Running</h2><div class=\"table-wrap\"><table><tr><th>Script</th><th>Duration</th></tr>';"
         "var now=Date.now()/1000;"
         "s.running.forEach(function(r){h+='<tr><td>'+_esc(r.display||r.script)+'</td><td>'+_dh(now-r.start)+'</td></tr>';});"
         "h+='</table></div>';rn.innerHTML=h;}else{rn.innerHTML='';}"
         "var qn=document.getElementById('queued-section');"
         "if(s.queued.length){"
-        "var h='<h2>Queued</h2><div class=\"table-wrap\"><table>';"
+        "var h='<h2>🕒 Queued</h2><div class=\"table-wrap\"><table>';"
         "s.queued.slice(0,30).forEach(function(q){h+='<tr><td>'+_esc(q.display||q.path||q)+'</td></tr>';});"
         "if(s.queued.length>30)h+='<tr><td>... and '+(s.queued.length-30)+' more</td></tr>';"
         "h+='</table></div>';qn.innerHTML=h;}else{qn.innerHTML='';}"
         "var cn=document.getElementById('completed-section');"
         "if(s.results.length){"
-        "var h='<h2>Completed</h2><div class=\"table-wrap\"><table><tr><th>Script</th><th>Duration</th><th>Status</th></tr>';"
+        "var h='<h2>📋 Completed</h2><div class=\"table-wrap\"><table><tr><th>Script</th><th>Duration</th><th>Status</th></tr>';"
         "s.results.slice(-20).forEach(function(r){"
-        "var st=r.success?'OK':'FAIL rc='+r.returncode;"
+        "var st=r.success?'✅ OK':'❌ FAIL rc='+r.returncode;"
         "var cl=r.success?'ok':'fail';"
         "h+='<tr><td>'+_esc(r.display||r.script_path)+'</td><td>'+_dh(r.duration)+'</td><td class=\"'+cl+'\">'+st+'</td></tr>';"
         "});h+='</table></div>';cn.innerHTML=h;}else{cn.innerHTML='';}"
@@ -1087,9 +1109,9 @@ def main() -> None:
         "-p",
         "--port",
         type=int,
-        default=0,
+        default=8080,
         metavar="PORT",
-        help="Start HTTP status server on PORT (default: 0 = off).",
+        help="HTTP status server port (default: 8080; 0 = off).",
     )
     p.add_argument(
         "--bind",

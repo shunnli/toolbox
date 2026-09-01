@@ -59,7 +59,7 @@ At least one source (script or `-f`) must be provided. Task files can be repeate
 | `--timeout`    | `24h`       | Per-script timeout (`2h`, `90m`, `45s`; `0` = no limit)       |
 | `--cpu-limit`  | `80`        | Max CPU % before throttling (`0` = off; needs `psutil`)       |
 | `--mem-limit`  | `80`        | Max memory % before throttling (`0` = off; needs `psutil`)    |
-| `-p`, `--port` | `0`         | Start HTTP status server on PORT (0 = off)                    |
+| `-p`, `--port` | `8080`      | HTTP status server port (0 = off)                             |
 | `--bind`       | `127.0.0.1` | Bind address for status server (use `0.0.0.0` for LAN access) |
 | `-y`, `--yes`  | off         | Skip confirmation prompt                                      |
 
@@ -106,7 +106,8 @@ Exit code is 0 only when all scripts succeed; 1 if any fail or time out.
 
 ### HTTP status server
 
-When `-p` / `--port` is set, batch_runner serves a live status page over HTTP:
+By default, batch_runner serves a live status page on localhost port 8080. Use
+`--port 0` to disable it or `-p` / `--port` to choose another port:
 
 - **`http://localhost:<port>/`** — auto-refreshing HTML dashboard (progress bar, running/queued/completed lists, resource gauges)
 - **`http://localhost:<port>/api/status`** — JSON endpoint for programmatic monitoring
