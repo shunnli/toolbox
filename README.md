@@ -14,9 +14,7 @@ See each tool's own `README.md` for usage details.
 | `python/batch_runner/` | Run Python and MATLAB scripts in batches. |
 | `python/monitor/` | Monitor log files in a live browser dashboard. |
 | `python/tablegen/` | Generate plain-text or LaTeX experiment tables. |
-| `python/metatag/` | Read, write, and delete PNG metadata. |
 | `python/texmerge/` | Merge multi-file LaTeX projects into one `.tex` file. |
-| `python/git_check/` | Inspect Git repository status and upstream sync. |
 | `python/net_check/` | Diagnose network and proxy state. |
 
 Example:
