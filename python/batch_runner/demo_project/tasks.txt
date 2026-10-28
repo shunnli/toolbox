@@ -1,4 +1,6 @@
-# demo task file
-python\batch_runner\demo_project\analysis_main.py
-python\batch_runner\demo_project\main_setup.py
-python\batch_runner\demo_project\group_a\main_calc.py
+# Run from this directory:
+# python ../batch_runner.py -f tasks.txt -j 2 --port 0 -y
+
+analysis_main.py
+main_setup.py
+group_a/main_calc.py

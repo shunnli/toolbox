@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Batch Runner — execute a list of scripts with parallelism and resource control.
-Supports MATLAB (.m) and Python (.py); executor chosen by file extension.
+Batch Runner — execute scripts and function calls with resource control.
+Supports MATLAB and Python, with plain-text lists or TOML task files.
 Cross-platform (Windows & Linux).  Zero dependencies.
 """
 
@@ -16,10 +16,13 @@ import subprocess
 import sys
 import threading
 import time
+import tomllib
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from abc import ABC, abstractmethod
 from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
+from dataclasses import dataclass, replace
 from multiprocessing import Manager
+from pathlib import Path
 from typing import Any, Optional
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -110,6 +113,101 @@ def _parse_lines(
             scripts.append(sp)
 
 
+@dataclass(frozen=True)
+class Task:
+    """One script or language-native code block, with a unique per-run ID."""
+
+    kind: str
+    value: str
+    cwd: str
+    source: str = ""
+    task_id: int = 0
+
+    @property
+    def extension(self) -> str:
+        if self.kind == "script":
+            return Path(self.value).suffix.lower()
+        return ".m" if self.kind == "matlab" else ".py"
+
+    @property
+    def display(self) -> str:
+        if self.kind == "script":
+            label = _sanitize_path(self.value)
+        else:
+            code = " ".join(self.value.splitlines())
+            label = f"{self.kind}: {code}"
+        return f"[{self.task_id}] {label}"
+
+    def __str__(self) -> str:
+        return self.display
+
+
+def _script_task(value: str, source: str = "") -> Task:
+    path = Path(os.path.abspath(value))
+    prefix = f"{source}: " if source else ""
+    if not path.is_file():
+        raise FileNotFoundError(f"{prefix}script not found: {value}")
+    if path.suffix.lower() not in (".m", ".py"):
+        raise ValueError(f"{prefix}unsupported file type '{path.suffix}': {value}")
+    return Task("script", str(path), str(path.parent), source)
+
+
+def parse_toml_taskfile(filepath: str) -> list[Task]:
+    """Read [[tasks]], each containing exactly one of script, matlab or python.
+
+    Script paths and inline-code working directories use the launch directory,
+    just as relative paths in legacy task lists do. Code is preserved verbatim.
+    Every entry is retained, including repeated scripts and calls.
+    """
+    try:
+        data = tomllib.loads(Path(filepath).read_text(encoding="utf-8-sig"))
+    except (tomllib.TOMLDecodeError, UnicodeError) as exc:
+        raise ValueError(f"{filepath}: {exc}") from exc
+    if set(data) != {"tasks"} or not isinstance(data["tasks"], list):
+        raise ValueError(f"{filepath}: expected only [[tasks]] entries")
+
+    tasks: list[Task] = []
+    for index, entry in enumerate(data["tasks"], 1):
+        source = f"{filepath}:tasks[{index}]"
+        if (
+            not isinstance(entry, dict)
+            or len(entry) != 1
+            or not set(entry) <= {"script", "matlab", "python"}
+        ):
+            raise ValueError(
+                f"{source}: specify exactly one of script, matlab or python"
+            )
+        kind, value = next(iter(entry.items()))
+        if not isinstance(value, str) or not value.strip() or "\0" in value:
+            raise ValueError(f"{source}: {kind} must be a non-empty string without NUL")
+        if kind == "script":
+            tasks.append(_script_task(value, source))
+        else:
+            tasks.append(Task(kind, value, os.getcwd(), source))
+    return tasks
+
+
+def collect_tasks(taskfiles: list[str], direct_scripts: list[str]) -> list[Task]:
+    """Combine inputs; deduplicate only legacy lists and positional scripts."""
+    tasks: list[Task] = []
+    seen: set[str] = set()
+    for filepath in taskfiles:
+        if Path(filepath).suffix.lower() == ".toml":
+            tasks.extend(parse_toml_taskfile(filepath))
+        else:
+            for script in parse_taskfiles([filepath]):
+                key = os.path.abspath(script)
+                if key not in seen:
+                    seen.add(key)
+                    tasks.append(_script_task(script))
+    for script in direct_scripts:
+        task = _script_task(script)
+        if task.value not in seen:
+            seen.add(task.value)
+            tasks.append(task)
+    return tasks
+
+
 def _parse_duration(s: str) -> float:
     """Parse a duration string like '2h', '30m', '1h30m', '45s' into seconds."""
     s = s.strip()
@@ -160,6 +258,8 @@ def _fmt_dh(seconds: float) -> str:
 class Executor(ABC):
     @abstractmethod
     def build_command(self, script_path: str) -> list[str]: ...
+    @abstractmethod
+    def build_code_command(self, code: str) -> list[str]: ...
     @property
     @abstractmethod
     def name(self) -> str: ...
@@ -174,9 +274,12 @@ class MatlabExecutor(Executor):
         return "MATLAB"
 
     def build_command(self, script_path: str) -> list[str]:
-        d = os.path.dirname(os.path.abspath(script_path))
+        d = os.path.dirname(os.path.abspath(script_path)).replace("'", "''")
         n = os.path.splitext(os.path.basename(script_path))[0]
         return [self.cmd, "-batch", f"cd('{d}'); {n};"]
+
+    def build_code_command(self, code: str) -> list[str]:
+        return [self.cmd, "-batch", code]
 
 
 class PythonExecutor(Executor):
@@ -189,6 +292,9 @@ class PythonExecutor(Executor):
 
     def build_command(self, script_path: str) -> list[str]:
         return [self.cmd, os.path.abspath(script_path)]
+
+    def build_code_command(self, code: str) -> list[str]:
+        return [self.cmd, "-c", code]
 
 
 def _which(cmd: str) -> bool:
@@ -359,7 +465,7 @@ def _build_status_html(runner: "BatchRunner") -> str:
         "<script>document.documentElement.className=localStorage.getItem('batch-runner-theme')||''</script>",
         f"<style>{_STATUS_CSS}</style></head><body>",
         '<div class="header">',
-        f'<h1>🚀 batch_runner &mdash; <span id="h1-total">{total}</span> scripts</h1>',
+        f'<h1>🚀 batch_runner &mdash; <span id="h1-total">{total}</span> tasks</h1>',
         '<button id="theme-toggle" title="Toggle theme" aria-label="Toggle color theme">'
         '<svg class="icon-moon" viewBox="0 0 24 24" aria-hidden="true">'
         '<path d="M20.5 14.3A8.5 8.5 0 0 1 9.7 3.5 8.5 8.5 0 1 0 20.5 14.3Z"/>'
@@ -423,11 +529,11 @@ def _build_status_html(runner: "BatchRunner") -> str:
     parts.append('<div id="running-section">')
     if s["running"]:
         parts.append('<h2>⚙️ Running</h2><div class="table-wrap"><table>')
-        parts.append("<tr><th>Script</th><th>Duration</th></tr>")
+        parts.append("<tr><th>Task</th><th>Duration</th></tr>")
         for r in s["running"]:
             dur = _fmt_dh(time.time() - r["start"])
             parts.append(
-                f"<tr><td>{_h_esc(_sanitize_path(r['script']))}</td><td>{dur}</td></tr>"
+                f"<tr><td>{_h_esc(r['display'])}</td><td>{dur}</td></tr>"
             )
         parts.append("</table></div>")
     parts.append("</div>")
@@ -436,7 +542,7 @@ def _build_status_html(runner: "BatchRunner") -> str:
     if s["queued"]:
         parts.append('<h2>🕒 Queued</h2><div class="table-wrap"><table>')
         for q in s["queued"][:30]:
-            parts.append(f"<tr><td>{_h_esc(_sanitize_path(q['path']))}</td></tr>")
+            parts.append(f"<tr><td>{_h_esc(q['display'])}</td></tr>")
         if len(s["queued"]) > 30:
             parts.append(f"<tr><td>... and {len(s['queued']) - 30} more</td></tr>")
         parts.append("</table></div>")
@@ -446,12 +552,12 @@ def _build_status_html(runner: "BatchRunner") -> str:
     if s["results"]:
         recent = s["results"][-20:]
         parts.append('<h2>📋 Completed</h2><div class="table-wrap"><table>')
-        parts.append("<tr><th>Script</th><th>Duration</th><th>Status</th></tr>")
+        parts.append("<tr><th>Task</th><th>Duration</th><th>Status</th></tr>")
         for r in recent:
             status = "✅ OK" if r["success"] else f"❌ FAIL rc={r['returncode']}"
             cls = "ok" if r["success"] else "fail"
             parts.append(
-                f"<tr><td>{_h_esc(_sanitize_path(r['script_path']))}</td>"
+                f"<tr><td>{_h_esc(r['display'])}</td>"
                 f"<td>{_fmt_dh(r['duration'])}</td>"
                 f'<td class="{cls}">{status}</td></tr>'
             )
@@ -524,7 +630,7 @@ def _build_status_html(runner: "BatchRunner") -> str:
         "document.getElementById('h1-total').textContent=t;"
         "var rn=document.getElementById('running-section');"
         "if(s.running.length){"
-        "var h='<h2>⚙️ Running</h2><div class=\"table-wrap\"><table><tr><th>Script</th><th>Duration</th></tr>';"
+        "var h='<h2>⚙️ Running</h2><div class=\"table-wrap\"><table><tr><th>Task</th><th>Duration</th></tr>';"
         "var now=Date.now()/1000;"
         "s.running.forEach(function(r){h+='<tr><td>'+_esc(r.display||r.script)+'</td><td>'+_dh(now-r.start)+'</td></tr>';});"
         "h+='</table></div>';rn.innerHTML=h;}else{rn.innerHTML='';}"
@@ -536,7 +642,7 @@ def _build_status_html(runner: "BatchRunner") -> str:
         "h+='</table></div>';qn.innerHTML=h;}else{qn.innerHTML='';}"
         "var cn=document.getElementById('completed-section');"
         "if(s.results.length){"
-        "var h='<h2>📋 Completed</h2><div class=\"table-wrap\"><table><tr><th>Script</th><th>Duration</th><th>Status</th></tr>';"
+        "var h='<h2>📋 Completed</h2><div class=\"table-wrap\"><table><tr><th>Task</th><th>Duration</th><th>Status</th></tr>';"
         "s.results.slice(-20).forEach(function(r){"
         "var st=r.success?'✅ OK':'❌ FAIL rc='+r.returncode;"
         "var cl=r.success?'ok':'fail';"
@@ -618,12 +724,15 @@ class BatchRunner:
     def __init__(
         self,
         args,
-        scripts: list[str],
+        scripts: list[Task] | list[str],
         taskfiles: list[str],
         direct_scripts: list[str] | None = None,
     ):
         self.args = args
-        self.scripts = scripts
+        self.scripts = [
+            replace(s if isinstance(s, Task) else _script_task(s), task_id=index)
+            for index, s in enumerate(scripts, 1)
+        ]
         self._taskfiles = [os.path.abspath(tf) for tf in taskfiles]
         self._direct_scripts: list[str] = list(direct_scripts or [])
 
@@ -634,7 +743,7 @@ class BatchRunner:
         self._exec_cache: dict[str, Executor] = {}
         self._lock = threading.Lock()
         self._start_time: float = 0
-        self._pending: list[str] = []
+        self._pending: list[Task] = []
         self._port: int = getattr(args, "port", 0) or 0
         self._httpd: ThreadingHTTPServer | None = None
         self.completed = 0
@@ -655,7 +764,7 @@ class BatchRunner:
         self._mem_ok: bool = True
         self._cpu_window: list[float] = []  # rolling window for SMA
         self._cpu_window_size: int = 3
-        self._running_start_times: dict[str, float] = {}
+        self._running_start_times: dict[int, float] = {}
         self._throttle_until: float = 0  # cooldown deadline
 
     def run(self) -> None:
@@ -672,7 +781,7 @@ class BatchRunner:
             else:
                 source_parts.append(f"{n} scripts")
         source = " + ".join(source_parts) if source_parts else "(none)"
-        print(f"\nbatch_runner — {len(scripts)} scripts from {source}")
+        print(f"\nbatch_runner — {len(scripts)} tasks from {source}")
         for s in scripts[:20]:
             print(f"  {s}")
         if len(scripts) > 20:
@@ -732,7 +841,7 @@ class BatchRunner:
         self.log.addHandler(fh)
 
         # Replay header to log file
-        self.log.info("Found %d script(s) from %s", len(scripts), source)
+        self.log.info("Found %d task(s) from %s", len(scripts), source)
         for s in scripts:
             self.log.info("  %s", s)
         if self._cpu_limit > 0 or self._mem_limit > 0:
@@ -778,10 +887,10 @@ class BatchRunner:
         print("\n===== Results =====")
         for r in self._results:
             if r["success"]:
-                print(f"  OK    {_fmt_dh(r['duration'])}  {r['script_path']}")
+                print(f"  OK    {_fmt_dh(r['duration'])}  {r['display']}")
             else:
                 print(
-                    f"  FAIL  {_fmt_dh(r['duration'])}  rc={r['returncode']}  {r['script_path']}"
+                    f"  FAIL  {_fmt_dh(r['duration'])}  rc={r['returncode']}  {r['display']}"
                 )
                 err = r["stderr"].strip()
                 if err:
@@ -794,17 +903,17 @@ class BatchRunner:
         for r in self._results:
             if r["success"]:
                 self.log.info(
-                    "  OK    %s  (%s)", r["script_path"], _fmt_dh(r["duration"])
+                    "  OK    %s  (%s)", r["display"], _fmt_dh(r["duration"])
                 )
             else:
                 self.log.info(
                     "  FAIL  %s  rc=%d  (%s)",
-                    r["script_path"],
+                    r["display"],
                     r["returncode"],
                     _fmt_dh(r["duration"]),
                 )
         self.log.info(
-            "Finished  %d scripts  |  %d succeeded  |  %d failed  |  %s elapsed",
+            "Finished  %d tasks  |  %d succeeded  |  %d failed  |  %s elapsed",
             self._total,
             self.success,
             self.failed,
@@ -823,8 +932,8 @@ class BatchRunner:
                 print("\nShutting down server...")
         self._stop_server()
 
-    def _ex_for(self, path: str) -> Executor:
-        ext = os.path.splitext(path)[1]
+    def _ex_for(self, task: Task) -> Executor:
+        ext = task.extension
         if ext not in self._exec_cache:
             self._exec_cache[ext] = make_executor(ext)
         return self._exec_cache[ext]
@@ -861,7 +970,7 @@ class BatchRunner:
                 self._mem_ok = True
         return ok
 
-    def _submit(self, pending: list[str]) -> None:
+    def _submit(self, pending: list[Task]) -> None:
         assert self._pool is not None
         while (
             not self._stop
@@ -906,13 +1015,17 @@ class BatchRunner:
                 f"  start  {s}  ({n_running} running, {n_queued} queued, "
                 f"{self.completed}/{self._total} done)  ({ts})"
             )
-            cmd = self._ex_for(s).build_command(s)
-            cwd = os.path.dirname(os.path.abspath(s))
+            executor = self._ex_for(s)
+            cmd = (
+                executor.build_command(s.value)
+                if s.kind == "script"
+                else executor.build_code_command(s.value)
+            )
             fut = self._pool.submit(
-                run_script, cmd, s, self._timeout_s, cwd, self._active_pids
+                run_script, cmd, s.value, self._timeout_s, s.cwd, self._active_pids
             )
             self._futures[fut] = s
-            self._running_start_times[s] = time.time()
+            self._running_start_times[s.task_id] = time.time()
 
     def _wait(self) -> None:
         done, _ = wait(
@@ -920,7 +1033,7 @@ class BatchRunner:
         )
         for fut in done:
             s = self._futures.pop(fut)
-            self._running_start_times.pop(s, None)
+            self._running_start_times.pop(s.task_id, None)
             try:
                 r = fut.result(timeout=1)
             except Exception as exc:
@@ -929,7 +1042,8 @@ class BatchRunner:
                 self.log.error("Exception in worker for %s: %s", s, exc)
                 continue
             self.completed += 1
-            self._write_output(r)
+            r.update(task_id=s.task_id, kind=s.kind, display=s.display)
+            self._write_output(r, s)
             self._results.append(r)
             ts = time.strftime("%Y-%m-%d %H:%M:%S")
             if r["success"]:
@@ -956,11 +1070,11 @@ class BatchRunner:
                     r["stderr"][:120],
                 )
 
-    def _write_output(self, r: dict) -> None:
+    def _write_output(self, r: dict, task: Task) -> None:
         content = f"{r['stdout']}{r['stderr']}"
         if not content:
             return
-        name = re.sub(r"[\\/:*?\"<>|]", "_", r["script_path"])
+        name = f"task_{task.task_id:04d}_{task.kind}"
         fpath = os.path.join(self._output_dir, f"{name}.log")
         with open(fpath, "w", encoding="utf-8") as f:
             f.write(content)
@@ -985,20 +1099,21 @@ class BatchRunner:
         """Thread-safe snapshot of current state."""
         with self._lock:
             running = []
-            for _fut, path in list(self._futures.items()):
+            for _fut, task in list(self._futures.items()):
                 running.append(
                     {
-                        "script": path,
-                        "display": _sanitize_path(path),
-                        "start": self._running_start_times.get(path, time.time()),
+                        "task_id": task.task_id,
+                        "kind": task.kind,
+                        "script": task.value,
+                        "display": task.display,
+                        "start": self._running_start_times.get(task.task_id, time.time()),
                     }
                 )
-            queued = [{"path": p, "display": _sanitize_path(p)} for p in self._pending]
-            results = []
-            for r in self._results:
-                r2 = dict(r)
-                r2["display"] = _sanitize_path(r["script_path"])
-                results.append(r2)
+            queued = [
+                {"task_id": t.task_id, "kind": t.kind, "path": t.value, "display": t.display}
+                for t in self._pending
+            ]
+            results = [dict(r) for r in self._results]
             state = {
                 "total": self._total,
                 "completed": self.completed,
@@ -1064,7 +1179,7 @@ class BatchRunner:
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="Run a list of scripts in parallel with resource control.",
+        description="Run MATLAB/Python scripts and calls in parallel with resource control.",
     )
 
     p.add_argument(
@@ -1079,7 +1194,7 @@ def main() -> None:
         action="append",
         default=[],
         metavar="TASKFILE",
-        help="Task file(s) listing scripts (repeatable, one script per line).",
+        help="Task files: plain-text script lists or .toml tasks (repeatable; - reads a list from stdin).",
     )
     p.add_argument(
         "-j", "--jobs", type=int, default=1, help="Max concurrent workers (default: 1)."
@@ -1088,7 +1203,7 @@ def main() -> None:
         "--timeout",
         type=str,
         default="24h",
-        help="Per-script timeout, e.g. 2h, 90m, 45s (default: 24h; 0 = no limit).",
+        help="Per-task timeout, e.g. 2h, 90m, 45s (default: 24h; 0 = no limit).",
     )
     p.add_argument(
         "--cpu-limit",
@@ -1135,41 +1250,18 @@ def main() -> None:
         )
         sys.exit(1)
 
-    scripts: list[str] = []
-    seen: set[str] = set()
+    try:
+        tasks = collect_tasks(args.file, args.scripts)
+    except (OSError, ValueError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
-    # Step 1: task files via -f
-    for tf in args.file:
-        try:
-            for s in parse_taskfiles([tf]):
-                key = os.path.abspath(s)
-                if key not in seen:
-                    seen.add(key)
-                    scripts.append(s)
-        except (FileNotFoundError, ValueError) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            sys.exit(1)
-
-    # Step 2: direct scripts from positional args
-    for s in args.scripts:
-        if not os.path.isfile(s):
-            print(f"Error: script not found: {s}", file=sys.stderr)
-            sys.exit(1)
-        ext = os.path.splitext(s)[1].lower()
-        if ext not in (".m", ".py"):
-            print(f"Error: unsupported file type '{ext}': {s}", file=sys.stderr)
-            sys.exit(1)
-        key = os.path.abspath(s)
-        if key not in seen:
-            seen.add(key)
-            scripts.append(s)
-
-    if not scripts:
-        print("Error: no scripts found.", file=sys.stderr)
+    if not tasks:
+        print("Error: no tasks found.", file=sys.stderr)
         sys.exit(1)
 
     taskfiles_display = [tf if tf != "-" else "(stdin)" for tf in args.file]
-    runner = BatchRunner(args, scripts, taskfiles_display, args.scripts)
+    runner = BatchRunner(args, tasks, taskfiles_display, args.scripts)
     runner.run()
     if runner.failed > 0:
         sys.exit(1)

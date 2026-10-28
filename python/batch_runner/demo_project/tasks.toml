@@ -1,0 +1,26 @@
+# Run from this directory:
+# python ../batch_runner.py -f tasks.toml -j 2 --port 0 -y
+
+[[tasks]]
+script = "main_setup.py"
+
+[[tasks]]
+matlab = "disp(sum([1 2; 3 4], 2))"  # Matrix and dimension arguments
+
+[[tasks]]
+python = "from math import hypot; print(hypot(3, 4))"  # Function arguments
+
+[[tasks]]
+matlab = '''
+% Environment settings apply only to this task
+setenv('BATCH_DEMO_MODE', 'test');
+disp(getenv('BATCH_DEMO_MODE'));
+'''
+
+[[tasks]]
+python = '''
+# Environment settings apply only to this task
+import os
+os.environ['BATCH_DEMO_MODE'] = 'test'
+print(os.environ['BATCH_DEMO_MODE'])
+'''
